@@ -6,12 +6,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"github.com/ulikunitz/xz"
 	"io"
 	"io/ioutil"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ulikunitz/xz"
 )
 
 func matchExecutableName(cmd, target string) bool {
@@ -133,4 +134,51 @@ func UncompressCommand(src io.Reader, url, cmd string) (io.Reader, error) {
 
 	log.Println("Uncompression is not needed", url)
 	return src, nil
+}
+
+type IoAndName struct {
+	Io   io.Reader
+	Name string
+}
+
+func UncompressCommandAllFile(src io.Reader, url, cmd string) ([]IoAndName, error) {
+	var arrayIoReader []IoAndName
+	if strings.HasSuffix(url, ".zip") {
+		log.Println("Uncompressing zip file", url)
+
+		// Zip format requires its file size for uncompressing.
+		// So we need to read the HTTP response into a buffer at first.
+		buf, err := ioutil.ReadAll(src)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to create buffer for zip file: %s", err)
+		}
+
+		r := bytes.NewReader(buf)
+		z, err := zip.NewReader(r, r.Size())
+		if err != nil {
+			return nil, fmt.Errorf("Failed to uncompress zip file: %s", err)
+		}
+
+		for _, file := range z.File {
+			fmt.Println("---------- ", file.Name)
+		}
+		for _, file := range z.File {
+			if !file.FileInfo().IsDir() {
+				log.Println("Executable file", file.Name, "was found in zip archive")
+				if asset, err := file.Open(); err == nil {
+					arrayIoReader = append(arrayIoReader, IoAndName{Io: asset, Name: file.Name})
+				} else {
+					return nil, fmt.Errorf("File '%s' for the command is not found in %s", cmd, url)
+				}
+			}
+		}
+		if len(arrayIoReader) != 0 {
+			return arrayIoReader, nil
+		}
+
+		return nil, fmt.Errorf("File '%s' for the command is not found in %s", cmd, url)
+	}
+
+	log.Println("Uncompression is not needed", url)
+	return arrayIoReader, nil
 }

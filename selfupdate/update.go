@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,20 +16,67 @@ import (
 	"github.com/inconshreveable/go-update"
 )
 
+var (
+	openFile = os.OpenFile
+)
+
+// Модифицированный update
 func uncompressAndUpdate(src io.Reader, assetURL, cmdPath string) error {
 	_, cmd := filepath.Split(cmdPath)
-	asset, err := UncompressCommand(src, assetURL, cmd)
+	assetArray, err := UncompressCommandAllFile(src, assetURL, cmd)
 	if err != nil {
 		return err
 	}
 
+	Dir := filepath.Dir(cmdPath)
+
 	log.Println("Will update", cmdPath, "to the latest downloaded from", assetURL)
-	return update.Apply(asset, update.Options{
-		TargetPath: cmdPath,
-	})
+	var newBytes []byte
+
+	// Начинаем записывать файлы
+	for _, asset := range assetArray {
+		filePath := Dir + "/" + asset.Name
+		if cmdPath == filePath {
+			// Если файл бинарник то делаем это
+			err := update.Apply(asset.Io, update.Options{
+				TargetPath: filePath,
+			})
+			if err != nil {
+				return err
+			}
+		} else {
+			// Все остальные файлы просто записываем
+			newPath := filepath.Join(Dir, fmt.Sprintf("%s", asset.Name))
+			dirBeforeFile := filepath.Dir(newPath)
+			if _, err := os.Stat(dirBeforeFile); os.IsNotExist(err) {
+				os.Mkdir(dirBeforeFile, os.ModePerm)
+			}
+			fp, err := openFile(newPath, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return err
+			}
+			defer fp.Close()
+
+			newBytes = StreamToByte(asset.Io)
+
+			_, err = io.Copy(fp, bytes.NewReader(newBytes))
+			if err != nil {
+				return err
+			}
+			fp.Close()
+		}
+	}
+	return nil
+}
+func StreamToByte(stream io.Reader) []byte {
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(stream)
+	return buf.Bytes()
 }
 
 func (up *Updater) downloadDirectlyFromURL(assetURL string) (io.ReadCloser, error) {
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
 	req, err := http.NewRequest("GET", assetURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create HTTP request to %s: %s", assetURL, err)
@@ -105,6 +153,21 @@ func (up *Updater) UpdateTo(rel *Release, cmdPath string) error {
 	return uncompressAndUpdate(bytes.NewReader(data), rel.AssetURL, cmdPath)
 }
 
+func (up *Updater) DownloadDirectlyFromURL(directUrl, cmdPath string) error {
+	src, err := up.downloadDirectlyFromURL(directUrl)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	data, err := ioutil.ReadAll(src)
+	if err != nil {
+		return fmt.Errorf("Failed reading asset body: %v", err)
+	}
+
+	return uncompressAndUpdate(bytes.NewReader(data), directUrl, cmdPath)
+}
+
 // UpdateCommand updates a given command binary to the latest version.
 // 'slug' represents 'owner/name' repository on GitHub and 'current' means the current version.
 func (up *Updater) UpdateCommand(cmdPath string, current semver.Version, slug string) (*Release, error) {
@@ -125,7 +188,7 @@ func (up *Updater) UpdateCommand(cmdPath string, current semver.Version, slug st
 		cmdPath = p
 	}
 
-	rel, ok, err := up.DetectLatest(slug)
+	rel, ok, err := up.DetectVersion(slug, current.String())
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +222,7 @@ func (up *Updater) UpdateSelf(current semver.Version, slug string) (*Release, er
 // this function is not available to update a release for private repositories.
 // cmdPath is a file path to command executable.
 func UpdateTo(assetURL, cmdPath string) error {
+	fmt.Println("func UpdateTo(assetURL, cmdPath string) error {")
 	up := DefaultUpdater()
 	src, err := up.downloadDirectlyFromURL(assetURL)
 	if err != nil {

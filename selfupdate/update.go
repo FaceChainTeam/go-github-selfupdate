@@ -19,7 +19,7 @@ import (
 
 var (
 	openFile = os.OpenFile
-	mutex    = sync.Mutex
+	mutex    = sync.Mutex{}
 )
 
 // Модифицированный update
@@ -53,8 +53,10 @@ func uncompressAndUpdate(src io.Reader, assetURL, cmdPath string) error {
 			newPath := filepath.Join(Dir, fmt.Sprintf("%s", asset.Name))
 			dirBeforeFile := filepath.Dir(newPath)
 			if _, err := os.Stat(dirBeforeFile); os.IsNotExist(err) {
-				os.Mkdir(dirBeforeFile, os.ModePerm)
+				os.MkdirAll(dirBeforeFile, os.ModePerm)
 			}
+
+			os.Remove(newPath)
 			fp, err := openFile(newPath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				return err

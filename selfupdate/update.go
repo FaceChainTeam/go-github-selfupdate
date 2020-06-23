@@ -56,12 +56,13 @@ func uncompressAndUpdate(src io.Reader, assetURL, cmdPath string) error {
 				os.MkdirAll(dirBeforeFile, os.ModePerm)
 			}
 
-			os.Remove(newPath)
 			fp, err := openFile(newPath, os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				return err
 			}
 			defer fp.Close()
+			fp.Truncate(0)
+			fp.Seek(0, 0)
 
 			newBytes = StreamToByte(asset.Io)
 

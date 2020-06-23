@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/blang/semver"
 	"github.com/inconshreveable/go-update"
@@ -18,10 +19,13 @@ import (
 
 var (
 	openFile = os.OpenFile
+	mutex    = sync.Mutex
 )
 
 // Модифицированный update
 func uncompressAndUpdate(src io.Reader, assetURL, cmdPath string) error {
+	mutex.Lock()
+	defer mutex.Unlock()
 	_, cmd := filepath.Split(cmdPath)
 	assetArray, err := UncompressCommandAllFile(src, assetURL, cmd)
 	if err != nil {
